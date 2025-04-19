@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alumni Data Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/animate.css@4.1.1/animate.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://unpkg.com/gridjs/dist/gridjs.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/gridjs/dist/theme/mermaid.min.css">
+    
+    <style>
+        .email-link {
+            color: #3b82f6;
+            text-decoration: none;
+        }
+
+        .email-link:hover {
+            color: #2563eb;
+            text-decoration: underline;
+        }
+
+        .gridjs-container {
+            box-shadow: none !important;
+            border: 1px solid #e5e7eb !important;
+        }
+
+        .gridjs-th {
+            background-color: #f9fafb !important;
+            font-weight: 600 !important;
+        }
+
+        .gridjs-td {
+            padding: 1rem !important;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-7xl">
+        <!-- Header -->
+        <header class="mb-10 text-center animate__animated animate__fadeIn animate__delay-1s">
+            <h1 class="text-4xl font-bold text-gray-900 mb-2">Alumni Network</h1>
+            <p class="text-lg text-gray-600 max-w-2xl mx-auto">
+                Connecting our alumni community across generations and locations
+            </p>
+        </header>
+
+        <!-- Statistics Section -->
+        <section id="statistics" class="mb-10">
+            <div class="bg-white p-6 rounded-xl shadow-md">
+                <h2 class="text-xl font-semibold text-gray-800">Company Distribution</h2>
+                <p class="text-gray-600 mb-4">Here is the distribution of alumni by company.</p>
+                <canvas id="companyChart" class="w-full" height="400"></canvas>
+            </div>
+        </section>
+
+        <!-- Data Table -->
+        <main>
+            <div id="errorMessage" class="hidden bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded-lg shadow-sm">
+                <div class="flex">
+                    <div class="flex-shrink-0">
+                        <i class="fas fa-exclamation-circle text-red-500 mt-1"></i>
+                    </div>
+                    <div class="ml-3">
+                        <h3 class="text-sm font-medium text-red-800">Error loading data</h3>
+                        <div class="mt-2 text-sm text-red-700">
+                            <p id="errorText"></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="alumniTableContainer" class="bg-white rounded-xl shadow-sm overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div>
+                        <h2 class="text-lg font-semibold text-gray-800">Alumni Directory</h2>
+                        <p class="text-sm text-gray-500" id="recordCount"></p>
+                    </div>
+                    <div class="flex space-x-3">
+                        <button id="exportExcelBtn" class="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                            <i class="fas fa-file-excel text-green-600 mr-2"></i> Export Excel
+                        </button>
+                        <button id="exportCsvBtn" class="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                            <i class="fas fa-file-csv text-blue-600 mr-2"></i> Export CSV
+                        </button>
+                    </div>
+                </div>
+
+                <div class="px-4 py-2">
+                    <div id="alumniTable" class="w-full"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+<script>
+    // Function to load and display alumni data from the Excel file
+    async function loadAlumniData() {
+        const requiredHeaders = [
+            'Full Name', 'Year of Entry', 'Email Address (if any)', 'City of Residence',
+            'Phone Number', 'Graduation Year', 'Company/Workplace Name', 'Company/Workplace Address', 'Job Position'
+        ];
+
+        try {
+            const response = await fetch('./assets/data.xlsx');
+            if (!response.ok) throw new Error('Unable to load the data file.');
+
+            const arrayBuffer = await response.arrayBuffer();
+            const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+            if (!jsonData.length) throw new Error('The Excel file is empty.');
+
+            const headers = jsonData[0];
+            const missingHeaders = requiredHeaders.filter(header => !headers.includes(header));
+            if (missingHeaders.length > 0) {
+                throw new Error(`Missing required headers: ${missingHeaders.join(', ')}`);
+            }
+
+            // Process and return data
+            const alumniData = jsonData.slice(1,171).map(row => {
+                const obj = {};
+                headers.forEach((h, i) => obj[h] = row[i] || '');
+                return obj;
+            });
+
+            return alumniData;
+        } catch (error) {
+            document.getElementById('errorMessage').classList.remove('hidden');
+            document.getElementById('errorText').textContent = error.message;
+            return null;
+        }
+    }
+
+    // Function to generate company distribution chart
+    function generateCompanyChart(data) {
+        const companyCount = {};
+
+        // Count occurrences of each company (case-insensitive), but skip empty company names
+        data.forEach(alumni => {
+            const company = alumni['Company/Workplace Name'].toLowerCase().trim(); // Remove extra spaces and convert to lowercase
+            if (company) { // Check if the company name is not empty
+                companyCount[company] = (companyCount[company] || 0) + 1;
+            }
+        });
+
+        // Prepare chart data
+        const chartData = {
+            labels: Object.keys(companyCount),
+            datasets: [{
+                label: 'Number of Alumni',
+                data: Object.values(companyCount),
+                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                borderColor: 'rgba(75, 192, 192, 1)',
+                borderWidth: 1
+            }]
+        };
+
+        // Create the chart
+        const ctx = document.getElementById('companyChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'bar',
+            data: chartData,
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+    }
+
+    // Function to initialize the table
+    function initTable(data) {
+        const alumniTable = new gridjs.Grid({
+            columns: [
+                { id: 'Full Name', name: 'Full Name' },
+                { id: 'Year of Entry', name: 'Year of Entry' },
+                { id: 'Email Address (if any)', name: 'Email' },
+                { id: 'City of Residence', name: 'City' },
+                { id: 'Phone Number', name: 'Phone' },
+                { id: 'Graduation Year', name: 'Graduation Year' },
+                { id: 'Company/Workplace Name', name: 'Company' },
+                { id: 'Company/Workplace Address', name: 'Company Address' },
+                { id: 'Job Position', name: 'Position' }
+            ],
+            data: data,
+            search: true,
+            sort: true,
+            pagination: { limit: 50, summary: true },
+            language: {
+                search: { placeholder: 'Search alumni...' },
+                pagination: { previous: '⬅️', next: '➡️', showing: 'Displaying', results: () => 'Records' }
+            },
+            style: { table: { 'white-space': 'nowrap' } },
+            fixedHeader: true,
+            height: '500px',
+            width: '100%'
+        }).render(document.getElementById('alumniTable'));
+
+        // Update the record count
+        document.getElementById('recordCount').textContent = `${data.length} alumni records`;
+    }
+
+    // Export functions
+    function exportToExcel(data) {
+        const headers = Object.keys(data[0]);
+        const exportData = [headers, ...data.map(row => headers.map(header => row[header]))];
+
+        const ws = XLSX.utils.aoa_to_sheet(exportData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "AlumniData");
+        XLSX.writeFile(wb, 'alumni_data.xlsx');
+    }
+
+    function exportToCsv(data) {
+        const headers = Object.keys(data[0]);
+        let csvContent = headers.join(',') + '\n';
+
+        data.forEach(row => {
+            const rowData = headers.map(header => `"${row[header].toString().replace(/"/g, '""')}"`);
+            csvContent += rowData.join(',') + '\n';
+        });
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'alumni_data.csv';
+        link.click();
+    }
+
+    // Main function to load data and initialize everything
+    (async function() {
+        const alumniData = await loadAlumniData();
+        if (alumniData) {
+            initTable(alumniData);
+            generateCompanyChart(alumniData);  // Generate company chart
+            document.getElementById('exportExcelBtn').addEventListener('click', () => exportToExcel(alumniData));
+            document.getElementById('exportCsvBtn').addEventListener('click', () => exportToCsv(alumniData));
+        }
+    })();
+</script>
+
+</body>
+</html>
